@@ -116,7 +116,7 @@ def load_data():
         date_fields = ['Last Activity Time', 'Modified Time', 'Created Time', 'Expected Start Date', 'Closed Date']
         for field in date_fields:
             if field in df.columns:
-                df[field + '_Date'] = pd.to_datetime(df[field], errors='ignore')
+                df[field + '_Date'] = pd.to_datetime(df[field], errors='coerce')
         
         # Extract numeric values from monetary fields
         money_fields = ['Estimated Book (Projected)', 'Estimated Book (Conservative)', 'Estimated Book (Low)', 'Estimated Book (High)']
@@ -129,7 +129,7 @@ def load_data():
                 if field + '_Value' in df.columns and df[field + '_Value'].notna().any():
                     df[field + '_Value'] = df[field + '_Value'].str.replace(',', '')
                 # Convert to float with safe error handling
-                df[field + '_Value'] = pd.to_numeric(df[field + '_Value'], errors='ignore')
+                df[field + '_Value'] = pd.to_numeric(df[field + '_Value'], errors='coerce')
         
         return df
     except Exception as e:
@@ -630,6 +630,16 @@ with tabs[7]:
 
 # Add a footer
 st.markdown("---")
-st.markdown("**Rimon Law Recruiting Dashboard** • Data Last Updated: {}".format(
-    df['Last Activity Time'].max() if 'Last Activity Time' in df.columns else "Unknown"
-))
+
+# Fix for the error - safely get the last update date
+last_update_date = "Unknown"
+if 'Last Activity Time_Date' in df.columns and not df['Last Activity Time_Date'].isna().all():
+    try:
+        # Get the max date using pandas method that handles NaN values
+        last_date = df['Last Activity Time_Date'].max()
+        if pd.notna(last_date):
+            last_update_date = last_date.strftime('%Y-%m-%d')
+    except Exception:
+        pass  # If there's any error, keep the default "Unknown"
+
+st.markdown(f"**Rimon Law Recruiting Dashboard** • Data Last Updated: {last_update_date}")
