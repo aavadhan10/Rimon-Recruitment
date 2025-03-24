@@ -103,7 +103,8 @@ def load_data():
         # Extract numeric values from status counts shown in your data
         if 'Recruit Status' in df.columns:
             df['Status_Count'] = df['Recruit Status'].str.extract(r'\(\ ?(\d+)\ ?\)')
-            df['Status_Count'] = pd.to_numeric(df['Status_Count'], errors='coerce')
+            # Convert to numeric, handling errors
+            df['Status_Count'] = pd.to_numeric(df['Status_Count'], errors='ignore')
             
             # Also clean up the status names by removing the counts
             df['Status_Clean'] = df['Recruit Status'].str.extract(r'(.*?)\s*\(', expand=False)
@@ -113,14 +114,18 @@ def load_data():
         date_fields = ['Last Activity Time', 'Modified Time', 'Created Time', 'Expected Start Date', 'Closed Date']
         for field in date_fields:
             if field in df.columns:
-                df[field + '_Date'] = pd.to_datetime(df[field], errors='coerce')
+                df[field + '_Date'] = pd.to_datetime(df[field], errors='ignore')
         
         # Extract numeric values from monetary fields
         money_fields = ['Estimated Book (Projected)', 'Estimated Book (Conservative)', 'Estimated Book (Low)', 'Estimated Book (High)']
         for field in money_fields:
             if field in df.columns:
                 df[field + '_Value'] = df[field].str.extract(r'\$\s*([\d,]+(?:\.\d+)?)')
-                df[field + '_Value'] = df[field + '_Value'].str.replace(',', '').astype(float, errors='coerce')
+                # Handle comma removal safely
+                if df[field + '_Value'].notna().any():
+                    df[field + '_Value'] = df[field + '_Value'].str.replace(',', '')
+                # Convert to float with safe error handling
+                df[field + '_Value'] = pd.to_numeric(df[field + '_Value'], errors='ignore')
         
         return df
     except Exception as e:
@@ -465,945 +470,271 @@ with tabs[1]:
     st.header("Recruits by Source")
     
     # Process data for the chart
-if 'Recruit Status' in filtered_df.columns:
-    status_counts = filtered_df['Recruit Status'].value_counts().reset_index()
-    status_counts.columns = ['Status', 'Count']
-    status_counts = status_counts[status_counts['Count'] > 0]
-    
-    if not status_counts.empty:
-        # Clean status names to make them more readable
-        status_counts['Status_Clean'] = status_counts['Status'].str.extract(r'(.*?)\s*\(', expand=False).str.strip()
+    if 'Recruit Source' in filtered_df.columns:
+        source_counts = filtered_df['Recruit Source'].value_counts().reset_index()
+        source_counts.columns = ['Source', 'Count']
+        source_counts = source_counts[source_counts['Count'] > 0]
         
-        # Sort by the order in the recruitment pipeline
-        status_order = [
-            '0. Under Review/Intro Pending',
-            '1. Scheduling Initial Call',
-            'A. Initial Call Scheduled',
-            'B. Early Discussions',
-            'C. Ongoing Discussions',
-            'D. Due Diligence Stage',
-            'U.1. Agreement Executed',
-            'Z. On Hold'
-        ]
-        
-        # Map for ordering
-        status_map = {status: i for i, status in enumerate(status_order)}
-        
-        # Apply the ordering if the status is in our predefined list
-        status_counts['Order'] = status_counts['Status_Clean'].map(lambda x: status_map.get(x, 999))
-        status_counts = status_counts.sort_values('Order')
-        
-        # Create two columns for visualizations
-        col1, col2 = st.columns([3, 2])
-        
-        with col1:
-            # Create horizontal bar chart
-            fig = px.bar(
-                status_counts, 
-                y='Status_Clean', 
-                x='Count',
-                title='Recruits by Status',
-                orientation='h',
-                color='Count',
-                color_continuous_scale=px.colors.sequential.Blues,
-                labels={'Status_Clean': 'Status', 'Count': 'Number of Recruits'}
-            )
+        if not source_counts.empty:
+            # Sort by count in descending order
+            source_counts = source_counts.sort_values('Count', ascending=False)
             
-            fig.update_layout(
-                xaxis_title="Number of Recruits",
-                yaxis_title="Status",
-                height=500,
-                margin=dict(l=150, r=20, t=50, b=50)
-            )
+            # Create two columns for visualizations
+            col1, col2 = st.columns([3, 1])
             
-            st.plotly_chart(fig, use_container_width=True)
-        
-        with col2:
-            # Calculate percentages for each status
-            total = status_counts['Count'].sum()
-            status_counts['Percentage'] = (status_counts['Count'] / total * 100).round(2)
-            status_counts['Display'] = status_counts['Status_Clean'] + ' (' + status_counts['Percentage'].astype(str) + '%)'
-            
-            # Create a pie chart showing the distribution
-            fig_pie = px.pie(
-                status_counts, 
-                values='Count', 
-                names='Display',
-                title='Status Distribution (%)',
-                color_discrete_sequence=px.colors.sequential.Blues_r,
-                hole=0.4
-            )
-            
-            fig_pie.update_traces(textposition='inside', textinfo='percent+label')
-            fig_pie.update_layout(margin=dict(t=50, b=50))
-            
-            st.plotly_chart(fig_pie, use_container_width=True)
-        
-        # Status by practice group
-        st.subheader("Status by Practice Group")
-        
-        if 'Practice Group / Sector' in filtered_df.columns:
-            # Get top practice groups
-            top_practices = filtered_df['Practice Group / Sector'].value_counts().head(5).index.tolist()
-            
-            # Filter data
-            practice_status_data = filtered_df[filtered_df['Practice Group / Sector'].isin(top_practices)]
-            
-            # Create a contingency table
-            practice_status = pd.crosstab(
-                practice_status_data['Practice Group / Sector'],
-                practice_status_data['Status_Clean']
-            )
-            
-            # Reorder columns based on status order
-            ordered_columns = [col for col in status_order if col in practice_status.columns]
-            practice_status = practice_status[ordered_columns]
-            
-            # Create a stacked bar chart
-            fig = px.bar(
-                practice_status, 
-                barmode='stack',
-                title='Recruit Status by Top 5 Practice Groups',
-                color_discrete_sequence=px.colors.sequential.Blues_r,
-                labels={'value': 'Number of Recruits', 'index': 'Practice Group'}
-            )
-            
-            fig.update_layout(
-                xaxis_title="Practice Group",
-                yaxis_title="Number of Recruits",
-                legend_title="Status",
-                height=500,
-                margin=dict(l=0, r=0, t=50, b=100)
-            )
-            
-            # Rotate x-axis labels for better readability
-            fig.update_xaxes(tickangle=45)
-            
-            st.plotly_chart(fig, use_container_width=True)
-            
-            # Status transition analysis (if we had time data)
-            st.subheader("Status Transition Analysis")
-            
-            if 'Last Activity Time_Date' in filtered_df.columns:
-                # This would typically require historical data of status changes
-                # Since we don't have that, we'll simulate with a placeholder visualization
-                
-                st.info("""
-                This section requires historical status change data to show how recruits move through the pipeline over time.
-                Consider adding timestamp data for status changes to enable this analysis.
-                """)
-                
-                # Create sample data for illustration
-                stages = ['Initial Contact', 'Screening', 'Interview', 'Due Diligence', 'Offer', 'Accepted']
-                avg_days = [0, 7, 21, 35, 50, 65]
-                std_days = [0, 3, 7, 10, 8, 5]
-                
-                # Create dataframe
-                timeline_data = pd.DataFrame({
-                    'Stage': stages,
-                    'Average Days': avg_days,
-                    'Lower': [a - s for a, s in zip(avg_days, std_days)],
-                    'Upper': [a + s for a, s in zip(avg_days, std_days)]
-                })
-                
-                # Create a line chart
-                fig = go.Figure()
-                
-                # Add the main line
-                fig.add_trace(go.Scatter(
-                    x=timeline_data['Stage'],
-                    y=timeline_data['Average Days'],
-                    mode='lines+markers',
-                    name='Average Days',
-                    line=dict(color='royalblue', width=3),
-                    marker=dict(size=10)
-                ))
-                
-                # Add the range
-                fig.add_trace(go.Scatter(
-                    x=timeline_data['Stage'],
-                    y=timeline_data['Upper'],
-                    mode='lines',
-                    name='Upper Bound',
-                    line=dict(width=0),
-                    showlegend=False
-                ))
-                
-                fig.add_trace(go.Scatter(
-                    x=timeline_data['Stage'],
-                    y=timeline_data['Lower'],
-                    mode='lines',
-                    name='Lower Bound',
-                    line=dict(width=0),
-                    fillcolor='rgba(68, 138, 255, 0.2)',
-                    fill='tonexty',
-                    showlegend=False
-                ))
-                
-                fig.update_layout(
-                    title='Average Time Spent in Each Recruitment Stage (Sample Data)',
-                    xaxis_title='Recruitment Stage',
-                    yaxis_title='Days from Initial Contact',
-                    height=400,
-                    margin=dict(l=0, r=0, t=50, b=50)
-                )
-                
-                st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.write("No status data available")
-else:
-    st.write("No recruit status data available in the dataset")
-
-with tabs[3]:
-    st.header("Referral Analysis")
-    
-    # Process data for the referral analysis
-    if 'Recruit Referral Details' in filtered_df.columns:
-        referral_counts = filtered_df['Recruit Referral Details'].value_counts().reset_index()
-        referral_counts.columns = ['Referral Source', 'Count']
-        referral_counts = referral_counts[referral_counts['Count'] > 0]
-        
-        if not referral_counts.empty:
-            # Create overview metrics
-            st.subheader("Referral Overview")
-            
-            col1, col2, col3 = st.columns(3)
-            
-            # Total referrals
-            total_referrals = referral_counts['Count'].sum()
             with col1:
-                st.markdown("""
-                <div class="metric-card">
-                    <h3>Total Referrals</h3>
-                    <p>{}</p>
-                </div>
-                """.format(total_referrals), unsafe_allow_html=True)
-            
-            # Unique referral sources
-            unique_sources = len(referral_counts)
-            with col2:
-                st.markdown("""
-                <div class="metric-card">
-                    <h3>Unique Sources</h3>
-                    <p>{}</p>
-                </div>
-                """.format(unique_sources), unsafe_allow_html=True)
-            
-            # Average referrals per source
-            avg_per_source = (total_referrals / unique_sources).round(1)
-            with col3:
-                st.markdown("""
-                <div class="metric-card">
-                    <h3>Avg per Source</h3>
-                    <p>{}</p>
-                </div>
-                """.format(avg_per_source), unsafe_allow_html=True)
-            
-            # Take top 15 referral sources
-            top_referrals = referral_counts.head(15)
-            
-            # Create horizontal bar chart
-            fig = px.bar(
-                top_referrals, 
-                y='Referral Source', 
-                x='Count',
-                title='Top 15 Referral Sources',
-                orientation='h',
-                color='Count',
-                color_continuous_scale=px.colors.sequential.Blues,
-                labels={'Referral Source': 'Referral Source', 'Count': 'Number of Recruits'}
-            )
-            
-            fig.update_layout(
-                xaxis_title="Number of Recruits",
-                yaxis_title="Referral Source",
-                height=600,
-                margin=dict(l=250, r=20, t=50, b=50)
-            )
-            
-            st.plotly_chart(fig, use_container_width=True)
-            
-            # Referral quality analysis
-            st.subheader("Referral Quality Analysis")
-            
-            if 'Status_Clean' in filtered_df.columns and 'Estimated Book (Projected)_Value' in filtered_df.columns:
-                # Consider "high quality" referrals as those in later stages with high book values
-                late_stages = ['C. Ongoing Discussions', 'D. Due Diligence Stage', 'U.1. Agreement Executed']
+                # Take top 10 sources for clarity
+                top_sources = source_counts.head(10)
                 
-                # Add quality indicators to the dataframe
-                filtered_df['Is_Late_Stage'] = filtered_df['Status_Clean'].isin(late_stages)
-                filtered_df['Has_Book_Value'] = filtered_df['Estimated Book (Projected)_Value'].notna()
-                
-                # Group by referral source and calculate metrics
-                referral_quality = filtered_df.groupby('Recruit Referral Details').agg(
-                    Total=('Recruit Referral Details', 'size'),
-                    Late_Stage=('Is_Late_Stage', 'sum'),
-                    Avg_Book_Value=('Estimated Book (Projected)_Value', 'mean')
-                ).reset_index()
-                
-                # Calculate rate and filter for sources with at least 3 referrals
-                referral_quality['Late_Stage_Rate'] = (referral_quality['Late_Stage'] / referral_quality['Total'] * 100).round(1)
-                referral_quality = referral_quality[referral_quality['Total'] >= 3]
-                
-                # Sort by quality metrics
-                top_quality_sources = referral_quality.sort_values('Late_Stage_Rate', ascending=False).head(10)
-                
-                # Create a bubble chart
-                fig = px.scatter(
-                    top_quality_sources,
-                    x='Late_Stage_Rate',
-                    y='Avg_Book_Value',
-                    size='Total',
-                    color='Late_Stage_Rate',
-                    hover_name='Recruit Referral Details',
+                # Create bar chart
+                fig = px.bar(
+                    top_sources, 
+                    x='Source', 
+                    y='Count',
+                    title='Top 10 Recruit Sources',
+                    color='Count',
                     color_continuous_scale=px.colors.sequential.Blues,
-                    title='Top Referral Sources by Quality',
-                    labels={
-                        'Late_Stage_Rate': 'Late Stage Conversion Rate (%)',
-                        'Avg_Book_Value': 'Average Book Value ($)',
-                        'Total': 'Total Referrals'
-                    }
+                    labels={'Source': 'Recruit Source', 'Count': 'Number of Recruits'}
                 )
                 
                 fig.update_layout(
+                    xaxis_title="Recruit Source",
+                    yaxis_title="Number of Recruits",
+                    yaxis=dict(tickmode='linear'),
                     height=500,
-                    margin=dict(l=0, r=0, t=50, b=0)
-                )
-                
-                st.plotly_chart(fig, use_container_width=True)
-            
-            # Referral network visualization
-            st.subheader("Referral Network")
-            
-            # For this example, we'll create a simple visualization of how referrals are connected
-            # In a real implementation, you'd need data about the relationships between referrers
-            
-            st.info("""
-            This section could show a network graph of how referrals are connected to each other.
-            Consider tracking relationships between referral sources to enable this visualization.
-            """)
-            
-            # Search functionality for referrals
-            st.subheader("Search Referral Sources")
-            search_term = st.text_input("Search for a referral source:")
-            
-            if search_term:
-                filtered_referrals = referral_counts[referral_counts['Referral Source'].str.contains(search_term, case=False, na=False)]
-                if not filtered_referrals.empty:
-                    st.dataframe(filtered_referrals, width=800)
-                else:
-                    st.write("No matching referral sources found.")
-            else:
-                # Show all referral sources in a table
-                st.dataframe(referral_counts, width=800)
-        else:
-            st.write("No referral details available")
-    else:
-        st.write("No recruit referral details available in the dataset")
-
-with tabs[4]:
-    st.header("Projected Business Analysis")
-    
-    # Process data for the projected business analysis
-    if 'Estimated Book (Projected)_Value' in filtered_df.columns:
-        # Filter out rows with missing book values
-        book_df = filtered_df[filtered_df['Estimated Book (Projected)_Value'].notna()]
-        
-        if not book_df.empty:
-            # Create overview metrics
-            st.subheader("Book Value Overview")
-            
-            col1, col2, col3, col4 = st.columns(4)
-            
-            # Total projected business
-            total_projected = book_df['Estimated Book (Projected)_Value'].sum()
-            with col1:
-                st.markdown("""
-                <div class="metric-card">
-                    <h3>Total Projected</h3>
-                    <p>${:,.0f}</p>
-                </div>
-                """.format(total_projected), unsafe_allow_html=True)
-            
-            # Average book value
-            avg_book = book_df['Estimated Book (Projected)_Value'].mean()
-            with col2:
-                st.markdown("""
-                <div class="metric-card">
-                    <h3>Average Book</h3>
-                    <p>${:,.0f}</p>
-                </div>
-                """.format(avg_book), unsafe_allow_html=True)
-            
-            # Median book value
-            median_book = book_df['Estimated Book (Projected)_Value'].median()
-            with col3:
-                st.markdown("""
-                <div class="metric-card">
-                    <h3>Median Book</h3>
-                    <p>${:,.0f}</p>
-                </div>
-                """.format(median_book), unsafe_allow_html=True)
-            
-            # Candidates with book value
-            candidates_with_book = len(book_df)
-            with col4:
-                st.markdown("""
-                <div class="metric-card">
-                    <h3>Candidates with Book</h3>
-                    <p>{}</p>
-                </div>
-                """.format(candidates_with_book), unsafe_allow_html=True)
-            
-            # Create a histogram of book values
-            fig = px.histogram(
-                book_df,
-                x='Estimated Book (Projected)_Value',
-                nbins=20,
-                title='Distribution of Projected Book Values',
-                labels={'Estimated Book (Projected)_Value': 'Projected Book Value ($)', 'count': 'Number of Recruits'},
-                color_discrete_sequence=['#4e91dc']
-            )
-            
-            fig.update_layout(
-                xaxis_title="Projected Book Value ($)",
-                yaxis_title="Number of Recruits",
-                height=400
-            )
-            
-            # Add a vertical line for the average
-            fig.add_vline(x=avg_book, line_dash="dash", line_color="red", annotation_text=f"Avg: ${avg_book:,.0f}")
-            
-            st.plotly_chart(fig, use_container_width=True)
-            
-            # Create a box plot to show the distribution by status
-            if 'Status_Clean' in book_df.columns:
-                active_statuses = [s for s in status_order if s != 'Z. On Hold']
-                status_book_df = book_df[book_df['Status_Clean'].isin(active_statuses)]
-                
-                if not status_book_df.empty:
-                    fig = px.box(
-                        status_book_df,
-                        x='Status_Clean',
-                        y='Estimated Book (Projected)_Value',
-                        title='Book Value Distribution by Status',
-                        labels={
-                            'Status_Clean': 'Status',
-                            'Estimated Book (Projected)_Value': 'Projected Book Value ($)'
-                        },
-                        color='Status_Clean',
-                        color_discrete_sequence=px.colors.sequential.Blues_r
-                    )
-                    
-                    fig.update_layout(
-                        xaxis_title="Status",
-                        yaxis_title="Projected Book Value ($)",
-                        height=500,
-                        margin=dict(l=0, r=0, t=50, b=100)
-                    )
-                    
-                    # Rotate x-axis labels for better readability
-                    fig.update_xaxes(tickangle=45)
-                    
-                    st.plotly_chart(fig, use_container_width=True)
-            
-            # Breakdown by practice group if available
-            if 'Practice Group / Sector' in book_df.columns:
-                st.subheader("Book Value by Practice Group")
-                
-                practice_totals = book_df.groupby('Practice Group / Sector')['Estimated Book (Projected)_Value'].agg(['sum', 'count', 'mean']).reset_index()
-                practice_totals = practice_totals.sort_values('sum', ascending=False)
-                practice_totals.columns = ['Practice Group', 'Total Projected ($)', 'Number of Recruits', 'Average Projected ($)']
-                
-                # Format currency columns for display
-                practice_totals_display = practice_totals.copy()
-                practice_totals_display['Total Projected ($)'] = practice_totals_display['Total Projected ($)'].apply(lambda x: f"${x:,.0f}")
-                practice_totals_display['Average Projected ($)'] = practice_totals_display['Average Projected ($)'].apply(lambda x: f"${x:,.0f}")
-                
-                st.dataframe(practice_totals_display, width=800)
-                
-                # Visual representation
-                top_practices = practice_totals.head(10)
-                
-                # Create a grouped bar chart
-                fig = go.Figure()
-                
-                # Add total bar
-                fig.add_trace(go.Bar(
-                    x=top_practices['Practice Group'],
-                    y=top_practices['Total Projected ($)'],
-                    name='Total Projected ($)',
-                    marker_color='royalblue'
-                ))
-                
-                # Add average bar
-                fig.add_trace(go.Bar(
-                    x=top_practices['Practice Group'],
-                    y=top_practices['Average Projected ($)'],
-                    name='Average Projected ($)',
-                    marker_color='lightblue'
-                ))
-                
-                fig.update_layout(
-                    title='Top 10 Practice Groups by Projected Business',
-                    xaxis_title="Practice Group",
-                    yaxis_title="Amount ($)",
-                    barmode='group',
-                    height=500,
-                    margin=dict(t=50, b=150),
-                    legend=dict(
-                        orientation="h",
-                        yanchor="bottom",
-                        y=1.02,
-                        xanchor="right",
-                        x=1
-                    )
+                    margin=dict(t=50, b=100)
                 )
                 
                 # Rotate x-axis labels for better readability
                 fig.update_xaxes(tickangle=45)
                 
                 st.plotly_chart(fig, use_container_width=True)
+            
+            with col2:
+                # Create a pie chart of top 5 sources
+                top5_sources = source_counts.head(5)
+                other_count = source_counts.iloc[5:]['Count'].sum()
                 
-                # Create a pie chart for total book value by practice
+                # Add "Other" category
+                pie_data = pd.concat([
+                    top5_sources,
+                    pd.DataFrame({'Source': ['Other'], 'Count': [other_count]})
+                ])
+                
+                # Calculate percentages
+                total = pie_data['Count'].sum()
+                pie_data['Percentage'] = (pie_data['Count'] / total * 100).round(1)
+                pie_data['Label'] = pie_data['Source'] + ' (' + pie_data['Percentage'].astype(str) + '%)'
+                
                 fig_pie = px.pie(
-                    top_practices,
-                    values='Total Projected ($)',
-                    names='Practice Group',
-                    title='Distribution of Total Book Value by Practice Group',
+                    pie_data,
+                    names='Label',
+                    values='Count',
+                    title='Source Distribution',
                     hole=0.4,
                     color_discrete_sequence=px.colors.sequential.Blues
                 )
                 
-                fig_pie.update_traces(textposition='inside', textinfo='percent+label')
-                fig_pie.update_layout(height=500)
+                fig_pie.update_traces(textposition='inside', textinfo='percent')
                 
                 st.plotly_chart(fig_pie, use_container_width=True)
-        else:
-            st.write("No projected book value data available")
-    else:
-        st.write("No estimated book value data available in the dataset")
-
-with tabs[5]:
-    st.header("Timeline Analysis")
-    
-    if 'Last Activity Time_Date' in filtered_df.columns and not filtered_df['Last Activity Time_Date'].isna().all():
-        # Create overview metrics
-        st.subheader("Activity Trends")
-        
-        # Group by month and year
-        filtered_df['Year'] = filtered_df['Last Activity Time_Date'].dt.year
-        filtered_df['Month'] = filtered_df['Last Activity Time_Date'].dt.month
-        filtered_df['YearMonth'] = filtered_df['Last Activity Time_Date'].dt.to_period('M')
-        
-        # Activity by month
-        monthly_activity = filtered_df.groupby('YearMonth').size().reset_index(name='Count')
-        monthly_activity['YearMonth'] = monthly_activity['YearMonth'].dt.to_timestamp()
-        
-        # Create a line chart
-        fig = px.line(
-            monthly_activity,
-            x='YearMonth',
-            y='Count',
-            title='Monthly Recruitment Activity',
-            markers=True,
-            labels={'YearMonth': 'Month', 'Count': 'Number of Activities'}
-        )
-        
-        fig.update_layout(
-            xaxis_title="Month",
-            yaxis_title="Number of Activities",
-            height=400
-        )
-        
-        st.plotly_chart(fig, use_container_width=True)
-        
-        # Status changes over time
-        if 'Status_Clean' in filtered_df.columns:
-            st.subheader("Status Composition Over Time")
             
-            # Group by month and status
-            status_over_time = filtered_df.groupby(['YearMonth', 'Status_Clean']).size().reset_index(name='Count')
-            status_over_time['YearMonth'] = status_over_time['YearMonth'].dt.to_timestamp()
+            # Comparison of source effectiveness
+            st.subheader("Source Effectiveness")
             
-            # Only include the last 12 months
-            last_12_months = sorted(status_over_time['YearMonth'].unique())[-12:]
-            status_over_time = status_over_time[status_over_time['YearMonth'].isin(last_12_months)]
-            
-            # Create a stacked area chart
-            fig = px.area(
-                status_over_time,
-                x='YearMonth',
-                y='Count',
-                color='Status_Clean',
-                title='Recruit Status Composition Over Time',
-                labels={'YearMonth': 'Month', 'Count': 'Number of Recruits', 'Status_Clean': 'Status'}
-            )
-            
-            fig.update_layout(
-                xaxis_title="Month",
-                yaxis_title="Number of Recruits",
-                height=500,
-                legend_title="Status"
-            )
-            
-            st.plotly_chart(fig, use_container_width=True)
-        
-        # Activity by day of week
-        st.subheader("Activity by Day of Week")
-        
-        # Add day of week
-        filtered_df['DayOfWeek'] = filtered_df['Last Activity Time_Date'].dt.day_name()
-        
-        # Count activities by day
-        day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-        day_activity = filtered_df['DayOfWeek'].value_counts().reindex(day_order).reset_index()
-        day_activity.columns = ['Day', 'Count']
-        
-        # Create a bar chart
-        fig = px.bar(
-            day_activity,
-            x='Day',
-            y='Count',
-            title='Activity by Day of Week',
-            color='Count',
-            color_continuous_scale=px.colors.sequential.Blues,
-            labels={'Day': 'Day of Week', 'Count': 'Number of Activities'}
-        )
-        
-        fig.update_layout(
-            xaxis_title="Day of Week",
-            yaxis_title="Number of Activities",
-            height=400
-        )
-        
-        st.plotly_chart(fig, use_container_width=True)
-        
-        # Activity by hour of day
-        st.subheader("Activity by Hour of Day")
-        
-        # Extract hour
-        if 'Last Activity Time' in filtered_df.columns:
-            try:
-                # Try to extract time component
-                filtered_df['Hour'] = filtered_df['Last Activity Time'].str.extract(r'(\d+):\d+ (AM|PM)')
-                filtered_df['AM_PM'] = filtered_df['Last Activity Time'].str.extract(r'\d+:\d+ (AM|PM)')
+            # Calculate conversion metrics by source
+            if 'Status_Clean' in filtered_df.columns:
+                # Consider "converted" recruits as those in late stages
+                late_stages = ['C. Ongoing Discussions', 'D. Due Diligence Stage', 'U.1. Agreement Executed']
                 
-                # Convert hour to 24-hour format
-                filtered_df['Hour'] = pd.to_numeric(filtered_df['Hour'], errors='coerce')
-                filtered_df.loc[(filtered_df['AM_PM'] == 'PM') & (filtered_df['Hour'] < 12), 'Hour'] += 12
-                filtered_df.loc[(filtered_df['AM_PM'] == 'AM') & (filtered_df['Hour'] == 12), 'Hour'] = 0
+                # Group by source and count total and converted
+                source_effectiveness = filtered_df.groupby('Recruit Source').agg(
+                    Total=('Recruit Source', 'size'),
+                    Converted=('Status_Clean', lambda x: sum(x.isin(late_stages)))
+                ).reset_index()
                 
-                # Count activities by hour
-                hour_activity = filtered_df['Hour'].value_counts().sort_index().reset_index()
-                hour_activity.columns = ['Hour', 'Count']
+                # Calculate conversion rate
+                source_effectiveness['Conversion Rate'] = (source_effectiveness['Converted'] / source_effectiveness['Total'] * 100).round(1)
                 
-                # Fill in missing hours
-                all_hours = pd.DataFrame({'Hour': range(24)})
-                hour_activity = pd.merge(all_hours, hour_activity, on='Hour', how='left').fillna(0)
+                # Sort by conversion rate and filter for sources with at least 5 recruits
+                source_effectiveness = source_effectiveness[source_effectiveness['Total'] >= 5]
+                source_effectiveness = source_effectiveness.sort_values('Conversion Rate', ascending=False).head(10)
                 
-                # Create a bar chart
+                # Create a horizontal bar chart
                 fig = px.bar(
-                    hour_activity,
-                    x='Hour',
-                    y='Count',
-                    title='Activity by Hour of Day',
-                    color='Count',
+                    source_effectiveness,
+                    y='Recruit Source',
+                    x='Conversion Rate',
+                    title='Top 10 Sources by Conversion Rate (min. 5 recruits)',
+                    orientation='h',
+                    color='Conversion Rate',
                     color_continuous_scale=px.colors.sequential.Blues,
-                    labels={'Hour': 'Hour of Day (24-hour format)', 'Count': 'Number of Activities'}
+                    text='Conversion Rate',
+                    labels={'Recruit Source': 'Source', 'Conversion Rate': 'Conversion Rate (%)'}
                 )
                 
                 fig.update_layout(
-                    xaxis_title="Hour of Day",
-                    yaxis_title="Number of Activities",
+                    height=500,
+                    margin=dict(l=250, r=20, t=50, b=50)
+                )
+                
+                fig.update_traces(texttemplate='%{text:.1f}%', textposition='outside')
+                
+                st.plotly_chart(fig, use_container_width=True)
+            
+            # Source trends over time
+            st.subheader("Source Trends Over Time")
+            
+            if 'Last Activity Time_Date' in filtered_df.columns:
+                # Group by month and source
+                filtered_df['Month'] = filtered_df['Last Activity Time_Date'].dt.to_period('M')
+                
+                # Get top 5 sources
+                top_sources = source_counts.head(5)['Source'].tolist()
+                
+                # Filter for top sources only
+                source_trend_data = filtered_df[filtered_df['Recruit Source'].isin(top_sources)]
+                
+                # Group by month and source
+                source_trends = source_trend_data.groupby(['Month', 'Recruit Source']).size().reset_index(name='Count')
+                source_trends['Month'] = source_trends['Month'].dt.to_timestamp()
+                
+                # Create a line chart
+                fig = px.line(
+                    source_trends,
+                    x='Month',
+                    y='Count',
+                    color='Recruit Source',
+                    title='Recruitment Source Trends Over Time',
+                    markers=True,
+                    labels={'Month': 'Month', 'Count': 'Number of Recruits', 'Recruit Source': 'Source'}
+                )
+                
+                fig.update_layout(
+                    xaxis_title="Month",
+                    yaxis_title="Number of Recruits",
                     height=400,
-                    xaxis=dict(tickmode='linear', tick0=0, dtick=1)
+                    legend_title="Source"
                 )
                 
                 st.plotly_chart(fig, use_container_width=True)
-            except Exception as e:
-                st.write(f"Could not parse time information: {e}")
+            
+            # Detailed breakdown table
+            st.subheader("Detailed Source Breakdown")
+            
+            # Add total and percentage to the source counts
+            total_recruits = source_counts['Count'].sum()
+            source_counts['Percentage'] = (source_counts['Count'] / total_recruits * 100).round(2)
+            source_counts['Percentage'] = source_counts['Percentage'].astype(str) + '%'
+            
+            st.dataframe(source_counts, width=800)
+        else:
+            st.write("No source data available")
     else:
-        st.write("No activity timeline data available")
+        st.write("No recruit source data available in the dataset")
 
-with tabs[6]:
-    st.header("Geographic Distribution")
+with tabs[2]:
+    st.header("Recruits by Status")
     
-    if 'City' in filtered_df.columns and not filtered_df['City'].isna().all():
-        # Clean city data (remove any count indicators in parentheses)
-        filtered_df['City_Clean'] = filtered_df['City'].str.extract(r'(.*?)\s*\(', expand=False).str.strip()
+    # Process data for the chart
+    if 'Recruit Status' in filtered_df.columns:
+        status_counts = filtered_df['Recruit Status'].value_counts().reset_index()
+        status_counts.columns = ['Status', 'Count']
+        status_counts = status_counts[status_counts['Count'] > 0]
         
-        # City distribution
-        city_counts = filtered_df['City_Clean'].value_counts().reset_index()
-        city_counts.columns = ['City', 'Count']
-        
-        # Filter out empty or invalid cities
-        city_counts = city_counts[city_counts['City'].notna() & (city_counts['City'] != '-') & (city_counts['City'] != '')]
-        
-        if not city_counts.empty:
-            # Take top cities
-            top_cities = city_counts.head(15)
+        if not status_counts.empty:
+            # Clean status names to make them more readable
+            status_counts['Status_Clean'] = status_counts['Status'].str.extract(r'(.*?)\s*\(', expand=False).str.strip()
             
-            # Create a bar chart
-            fig = px.bar(
-                top_cities,
-                y='City',
-                x='Count',
-                title='Top 15 Cities by Number of Recruits',
-                orientation='h',
-                color='Count',
-                color_continuous_scale=px.colors.sequential.Blues,
-                labels={'City': 'City', 'Count': 'Number of Recruits'}
-            )
+            # Sort by the order in the recruitment pipeline
+            status_order = [
+                '0. Under Review/Intro Pending',
+                '1. Scheduling Initial Call',
+                'A. Initial Call Scheduled',
+                'B. Early Discussions',
+                'C. Ongoing Discussions',
+                'D. Due Diligence Stage',
+                'U.1. Agreement Executed',
+                'Z. On Hold'
+            ]
             
-            fig.update_layout(
-                xaxis_title="Number of Recruits",
-                yaxis_title="City",
-                height=500,
-                margin=dict(l=150, r=20, t=50, b=50)
-            )
+            # Map for ordering
+            status_map = {status: i for i, status in enumerate(status_order)}
             
-            st.plotly_chart(fig, use_container_width=True)
+            # Apply the ordering if the status is in our predefined list
+            status_counts['Order'] = status_counts['Status_Clean'].map(lambda x: status_map.get(x, 999))
+            status_counts = status_counts.sort_values('Order')
             
-            # City by status
-            if 'Status_Clean' in filtered_df.columns:
-                st.subheader("Recruitment Status by City")
+            # Create two columns for visualizations
+            col1, col2 = st.columns([3, 2])
+            
+            with col1:
+                # Create horizontal bar chart
+                fig = px.bar(
+                    status_counts, 
+                    y='Status_Clean', 
+                    x='Count',
+                    title='Recruits by Status',
+                    orientation='h',
+                    color='Count',
+                    color_continuous_scale=px.colors.sequential.Blues,
+                    labels={'Status_Clean': 'Status', 'Count': 'Number of Recruits'}
+                )
                 
-                # Get top 5 cities
-                top5_cities = city_counts.head(5)['City'].tolist()
+                fig.update_layout(
+                    xaxis_title="Number of Recruits",
+                    yaxis_title="Status",
+                    height=500,
+                    margin=dict(l=150, r=20, t=50, b=50)
+                )
                 
-                # Filter data for top cities
-                city_status_data = filtered_df[filtered_df['City_Clean'].isin(top5_cities)]
+                st.plotly_chart(fig, use_container_width=True)
+            
+            with col2:
+                # Calculate percentages for each status
+                total = status_counts['Count'].sum()
+                status_counts['Percentage'] = (status_counts['Count'] / total * 100).round(2)
+                status_counts['Display'] = status_counts['Status_Clean'] + ' (' + status_counts['Percentage'].astype(str) + '%)'
+                
+                # Create a pie chart showing the distribution
+                fig_pie = px.pie(
+                    status_counts, 
+                    values='Count', 
+                    names='Display',
+                    title='Status Distribution (%)',
+                    color_discrete_sequence=px.colors.sequential.Blues_r,
+                    hole=0.4
+                )
+                
+                fig_pie.update_traces(textposition='inside', textinfo='percent+label')
+                fig_pie.update_layout(margin=dict(t=50, b=50))
+                
+                st.plotly_chart(fig_pie, use_container_width=True)
+            
+            # Status by practice group
+            st.subheader("Status by Practice Group")
+            
+            if 'Practice Group / Sector' in filtered_df.columns:
+                # Get top practice groups
+                top_practices = filtered_df['Practice Group / Sector'].value_counts().head(5).index.tolist()
+                
+                # Filter data
+                practice_status_data = filtered_df[filtered_df['Practice Group / Sector'].isin(top_practices)]
                 
                 # Create a contingency table
-                city_status = pd.crosstab(
-                    city_status_data['City_Clean'],
-                    city_status_data['Status_Clean']
+                practice_status = pd.crosstab(
+                    practice_status_data['Practice Group / Sector'],
+                    practice_status_data['Status_Clean']
                 )
+                
+                # Reorder columns based on status order
+                ordered_columns = [col for col in status_order if col in practice_status.columns]
+                practice_status = practice_status[ordered_columns]
                 
                 # Create a stacked bar chart
                 fig = px.bar(
-                    city_status,
+                    practice_status, 
                     barmode='stack',
-                    title='Recruit Status by Top 5 Cities',
+                    title='Recruit Status by Top 5 Practice Groups',
                     color_discrete_sequence=px.colors.sequential.Blues_r,
-                    labels={'value': 'Number of Recruits', 'index': 'City'}
-                )
-                
-                fig.update_layout(
-                    xaxis_title="City",
-                    yaxis_title="Number of Recruits",
-                    legend_title="Status",
-                    height=500
-                )
-                
-                st.plotly_chart(fig, use_container_width=True)
-            
-            # City by practice area
-            if 'Practice Group / Sector' in filtered_df.columns:
-                st.subheader("Practice Groups by City")
-                
-                # Get top practices
-                top_practices = filtered_df['Practice Group / Sector'].value_counts().head(3).index.tolist()
-                
-                # Filter data
-                city_practice_data = filtered_df[
-                    (filtered_df['City_Clean'].isin(top5_cities)) & 
-                    (filtered_df['Practice Group / Sector'].isin(top_practices))
-                ]
-                
-                # Create a contingency table
-                city_practice = pd.crosstab(
-                    city_practice_data['City_Clean'],
-                    city_practice_data['Practice Group / Sector']
-                )
-                
-                # Create a grouped bar chart
-                fig = px.bar(
-                    city_practice,
-                    barmode='group',
-                    title='Top 3 Practice Groups in Top 5 Cities',
-                    color_discrete_sequence=px.colors.sequential.Blues_r,
-                    labels={'value': 'Number of Recruits', 'index': 'City'}
-                )
-                
-                fig.update_layout(
-                    xaxis_title="City",
-                    yaxis_title="Number of Recruits",
-                    legend_title="Practice Group",
-                    height=500
-                )
-                
-                st.plotly_chart(fig, use_container_width=True)
-            
-            # Detailed table of cities
-            st.subheader("All Cities")
-            st.dataframe(city_counts, width=800)
-        else:
-            st.write("No valid city data available")
-    else:
-        st.write("No geographic data available in the dataset")
-
-with tabs[7]:
-    st.header("Conversion Funnel Analysis")
-    
-    if 'Status_Clean' in filtered_df.columns:
-        st.subheader("Recruitment Funnel")
-        
-        # Define the pipeline stages in order
-        pipeline_stages = [
-            '0. Under Review/Intro Pending',
-            '1. Scheduling Initial Call',
-            'A. Initial Call Scheduled',
-            'B. Early Discussions',
-            'C. Ongoing Discussions',
-            'D. Due Diligence Stage',
-            'U.1. Agreement Executed'
-        ]
-        
-        # Count recruits in each stage
-        stage_counts = filtered_df['Status_Clean'].value_counts().reindex(pipeline_stages).fillna(0).reset_index()
-        stage_counts.columns = ['Stage', 'Count']
-        
-        # Calculate conversion rates
-        if len(stage_counts) > 0 and stage_counts['Count'].sum() > 0:
-            initial_count = stage_counts.iloc[0]['Count']
-            stage_counts['Conversion Rate'] = (stage_counts['Count'] / initial_count * 100).round(1)
-            stage_counts['Conversion Rate'] = stage_counts['Conversion Rate'].astype(str) + '%'
-            
-            # Create a funnel chart
-            simplified_stages = [s.split('.')[-1].strip() for s in stage_counts['Stage']]
-            
-            fig = go.Figure(go.Funnel(
-                y=simplified_stages,
-                x=stage_counts['Count'],
-                textposition="inside",
-                textinfo="value+percent initial",
-                marker={"color": ["#4e91dc", "#5a9be1", "#66a5e6", "#72afeb", "#7eb9f0", "#8ac3f5", "#96cdfa"]},
-                connector={"line": {"color": "royalblue", "dash": "dot", "width": 3}}
-            ))
-            
-            fig.update_layout(
-                title="Recruitment Pipeline Funnel",
-                height=500
-            )
-            
-            st.plotly_chart(fig, use_container_width=True)
-            
-            # Show the data in a table
-            st.subheader("Pipeline Stage Metrics")
-            st.dataframe(stage_counts, width=800)
-        
-        # Conversion metrics by different factors
-        st.subheader("Conversion Analysis")
-        
-        # Define what qualifies as conversion (late stage or executed agreement)
-        late_stages = ['C. Ongoing Discussions', 'D. Due Diligence Stage', 'U.1. Agreement Executed']
-        filtered_df['Converted'] = filtered_df['Status_Clean'].isin(late_stages)
-        
-        # Conversion factors to analyze
-        analysis_factors = []
-        
-        if 'Recruit Source' in filtered_df.columns:
-            analysis_factors.append('Recruit Source')
-        
-        if 'Practice Group / Sector' in filtered_df.columns:
-            analysis_factors.append('Practice Group / Sector')
-        
-        if 'City_Clean' in filtered_df.columns:
-            analysis_factors.append('City_Clean')
-        
-        if 'Recruit Referral Details' in filtered_df.columns:
-            analysis_factors.append('Recruit Referral Details')
-        
-        # Select a factor to analyze
-        if analysis_factors:
-            selected_factor = st.selectbox("Select a factor to analyze conversion rates:", analysis_factors)
-            
-            # Calculate conversion by the selected factor
-            conversion_by_factor = filtered_df.groupby(selected_factor).agg(
-                Total=('Converted', 'size'),
-                Converted=('Converted', 'sum')
-            ).reset_index()
-            
-            # Calculate conversion rate
-            conversion_by_factor['Conversion Rate'] = (conversion_by_factor['Converted'] / conversion_by_factor['Total'] * 100).round(1)
-            
-            # Filter for factors with at least 3 entries
-            conversion_by_factor = conversion_by_factor[conversion_by_factor['Total'] >= 3]
-            
-            # Sort by conversion rate and take top 10
-            top_conversion = conversion_by_factor.sort_values('Conversion Rate', ascending=False).head(10)
-            
-            # Create a horizontal bar chart
-            fig = px.bar(
-                top_conversion,
-                y=selected_factor,
-                x='Conversion Rate',
-                title=f'Top 10 {selected_factor} by Conversion Rate (min. 3 entries)',
-                orientation='h',
-                color='Conversion Rate',
-                color_continuous_scale=px.colors.sequential.Blues,
-                text='Conversion Rate',
-                labels={selected_factor: selected_factor, 'Conversion Rate': 'Conversion Rate (%)'}
-            )
-            
-            fig.update_layout(
-                height=500,
-                margin=dict(l=200, r=20, t=50, b=50)
-            )
-            
-            fig.update_traces(texttemplate='%{text:.1f}%', textposition='outside')
-            
-            st.plotly_chart(fig, use_container_width=True)
-            
-            # Show the data in a table
-            st.dataframe(top_conversion, width=800)
-        else:
-            st.write("No suitable factors available for conversion analysis")
-        
-        # Time to conversion analysis
-        st.subheader("Time to Conversion Analysis")
-        
-        if 'Created Time_Date' in filtered_df.columns and 'Last Activity Time_Date' in filtered_df.columns:
-            # Calculate days in pipeline
-            filtered_df['Days_in_Pipeline'] = (filtered_df['Last Activity Time_Date'] - filtered_df['Created Time_Date']).dt.days
-            
-            # Create a box plot by status
-            valid_time_df = filtered_df[(filtered_df['Days_in_Pipeline'] >= 0) & (filtered_df['Days_in_Pipeline'].notna())]
-            
-            if not valid_time_df.empty:
-                fig = px.box(
-                    valid_time_df,
-                    x='Status_Clean',
-                    y='Days_in_Pipeline',
-                    title='Days in Pipeline by Status',
-                    color='Status_Clean',
-                    color_discrete_sequence=px.colors.sequential.Blues_r,
-                    labels={'Status_Clean': 'Status', 'Days_in_Pipeline': 'Days in Pipeline'}
-                )
-                
-                fig.update_layout(
-                    xaxis_title="Status",
-                    yaxis_title="Days in Pipeline",
-                    height=500,
-                    margin=dict(l=0, r=0, t=50, b=100)
-                )
-                
-                # Rotate x-axis labels for better readability
-                fig.update_xaxes(tickangle=45)
-                
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.write("No valid time data available for pipeline analysis")
-        else:
-            st.write("Date information needed for time-to-conversion analysis is not available")
-    else:
-        st.write("Status information needed for conversion analysis is not available")
-
-# Add a footer
-st.markdown("---")
-st.markdown("**Rimon Law Recruiting Dashboard** • Data Last Updated: {}".format(
-    df['Last Activity Time'].max() if 'Last Activity Time' in df.columns else "Unknown"
-))
-
+                    labels={'value': 'Number of Recruits', 'index': 'Practice Group'}
