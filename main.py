@@ -821,10 +821,10 @@ with tabs[2]:
                 )
                 
                 st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.write("No status data available")
     else:
-        st.write("No status data available")
-else:
-    st.write("No recruit status data available in the dataset")
+        st.write("No recruit status data available in the dataset")
 
 with tabs[3]:
     st.header("Referral Analysis")
@@ -1465,6 +1465,13 @@ with tabs[7]:
             # Show the data in a table
             st.subheader("Pipeline Stage Metrics")
             st.dataframe(stage_counts, width=800)
+        
+        # Conversion metrics by different factors
+        st.subheader("Conversion Analysis")
+        
+        # Define what qualifies as conversion (late stage or executed agreement)
+        late_stages = ['C. Ongoing Discussions', 'D. Due Diligence Stage', 'U.1. Agreement Executed']
+        filtered_df['Converted'] = filtered_df['Status_Clean'].isin(late_stages)
         
         # Conversion factors to analyze
         analysis_factors = []
